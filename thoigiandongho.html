@@ -106,9 +106,11 @@ footer{font-size:12px;color:var(--ink-soft);text-align:center;padding:6px 0 24px
     <div class="card">
       <div class="stats" id="stats"></div>
       <div class="row"><h2 style="margin:0">Tổng hợp theo tuyến</h2><span class="sp"></span>
+        <label>Theo điều kiện: <select id="expCond"></select></label>
+        <button class="btn sec" id="expCondBtn">⬇ Xuất các tuyến theo điều kiện</button>
         <button class="btn" id="expAll">⬇ Xuất toàn bộ tuyến đã lọc</button></div>
       <div class="tw"><table id="sum"></table></div>
-      <div class="hint">Bấm vào một tuyến để xem chi tiết bên dưới.</div>
+      <div class="hint">Bấm vào một tuyến để xem chi tiết bên dưới. "Xuất theo điều kiện": chọn 1 điều kiện để ra file mỗi tuyến một sheet (chỉ khách hàng thuộc điều kiện đó), hoặc chọn "Tất cả điều kiện" để ra file mỗi điều kiện một sheet.</div>
     </div>
 
     <div class="card">
@@ -290,7 +292,7 @@ function run(){
   if(!S.routes.find(r=>r.name===S.sel))S.sel=null;
   setDisabled(false);render();
 }
-function setDisabled(d){$('expAll').disabled=d;}
+function setDisabled(d){$('expAll').disabled=d;$('expCondBtn').disabled=d;}
 
 /* ---------- Hiển thị ---------- */
 function render(){
@@ -307,6 +309,9 @@ function render(){
   $('sum').innerHTML=h;
   $('sum').querySelectorAll('tr[data-r]').forEach(tr=>tr.onclick=e=>{if(e.target.dataset.x!=null)return;S.sel=S.routes[tr.dataset.r].name;$('dGroup').value='all';render();});
   $('sum').querySelectorAll('[data-x]').forEach(b=>b.onclick=e=>{e.stopPropagation();exportRoutes([S.routes[b.dataset.x]],'Tuyen_'+S.routes[b.dataset.x].name);});
+  const ec=$('expCond').value||'all';
+  $('expCond').innerHTML='<option value="all">Tất cả điều kiện (mỗi điều kiện 1 sheet)</option>'+R.groups.map((g,i)=>`<option value="${i}">${esc(g)} (${fmt(S.routes.reduce((s,r)=>s+r.cnt[i],0))} KH)</option>`).join('');
+  $('expCond').value=[...$('expCond').options].some(o=>o.value===ec)?ec:'all';
   const cur=$('dGroup').value||'all';
   $('dGroup').innerHTML='<option value="all">Tất cả</option>'+R.groups.map((g,i)=>`<option value="${i}">${esc(g)}</option>`).join('');
   $('dGroup').value=[...$('dGroup').options].some(o=>o.value===cur)?cur:'all';
@@ -351,10 +356,10 @@ function sheetName(base,used){
   while(used.has(n)){const s=' ('+i+')';n=base.replace(/[\\\/\?\*\[\]:]/g,'-').slice(0,31-s.length)+s;i++;}
   used.add(n);return n;
 }
-function routeAOA(r){
+function routeAOA(r,g){
   const w=Math.max(...S.H.map(x=>x.length),0);
   const aoa=S.H.map((row,i)=>{const a=row.slice();while(a.length<w)a.push(null);return i===S.H.length-1?a.concat(EXTRA):a.concat(['','','','']);});
-  rowsOf(r.items,'all').forEach(o=>{const a=o.c.row.slice();while(a.length<w)a.push(null);aoa.push(a.concat([o.src,dstr(o.base),o.yrs,S.res.groups[o.g]]));});
+  rowsOf(r.items,g==null?'all':g).forEach(o=>{const a=o.c.row.slice();while(a.length<w)a.push(null);aoa.push(a.concat([o.src,dstr(o.base),o.yrs,S.res.groups[o.g]]));});
   return aoa;
 }
 function exportRoutes(list,file){
@@ -368,6 +373,30 @@ function exportRoutes(list,file){
   list.forEach(r=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(routeAOA(r)),sheetName(r.name,used)));
   XLSX.writeFile(wb,file.replace(/[^\w\u00C0-\u1EF9\-]+/g,'_')+'.xlsx');
 }
+function exportByCond(g){
+  const R=S.res,wb=XLSX.utils.book_new(),used=new Set();
+  const sum=[['Xuất theo điều kiện — tính đến '+dstr(R.ref)],[]];
+  if(g==='all'){
+    sum.push(['Điều kiện','Số KH']);
+    R.groups.forEach((n,k)=>sum.push([n,S.routes.reduce((s,r)=>s+r.cnt[k],0)]));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sum),sheetName('Tong hop',used));
+    R.groups.forEach((n,k)=>{
+      const items=S.routes.flatMap(r=>r.items.filter(x=>x.g===k));
+      if(items.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(routeAOA({items:items},k)),sheetName(n,used));
+    });
+    XLSX.writeFile(wb,'ThoiGianSuDung_TheoDieuKien.xlsx');
+  }else{
+    const k=Number(g),list=S.routes.filter(r=>r.cnt[k]>0);
+    if(!list.length){alert('Không có khách hàng nào thuộc điều kiện này.');return;}
+    sum.push(['Điều kiện: '+R.groups[k]],[],['Tuyến','Số KH']);
+    list.forEach(r=>sum.push([r.name,r.cnt[k]]));
+    sum.push(['Tổng cộng',list.reduce((s,r)=>s+r.cnt[k],0)]);
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sum),sheetName('Tong hop',used));
+    list.forEach(r=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(routeAOA(r,k)),sheetName(r.name,used)));
+    XLSX.writeFile(wb,('ThoiGianSuDung_'+R.groups[k]).replace(/[^\w\u00C0-\u1EF9\-]+/g,'_')+'.xlsx');
+  }
+}
+$('expCondBtn').onclick=()=>exportByCond($('expCond').value);
 $('expAll').onclick=()=>exportRoutes(S.routes,'ThoiGianSuDung_TatCaTuyen');
 $('expOne').onclick=()=>{const r=S.routes.find(x=>x.name===S.sel);if(r)exportRoutes([r],'Tuyen_'+r.name);};
 })();
